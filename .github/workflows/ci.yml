@@ -1,4 +1,4 @@
-name: build-windows
+name: CI
 
 on: push
 
@@ -16,16 +16,16 @@ jobs:
     needs:
       - package-windows
       - package-windows-sfx
-      # - package-macos
-      # - package-linux
-      # - package-ios
-      # - package-watchos
-      # - package-tvos
-      # - package-android
-      # - package-qnx
-      # - package-apple-universal
-      # - assemble-ios-assets
-      # - assemble-tvos-assets
+      - package-macos
+      - package-linux
+      - package-ios
+      - package-watchos
+      - package-tvos
+      - package-android
+      - package-qnx
+      - package-apple-universal
+      - assemble-ios-assets
+      - assemble-tvos-assets
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -149,10 +149,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - frida-windows
-      # - frida-macos
-      # - frida-linux
-      # - assemble-ios-assets
-      # - assemble-tvos-assets
+      - frida-macos
+      - frida-linux
+      - assemble-ios-assets
+      - assemble-tvos-assets
     steps:
       - name: Check out repo
         uses: actions/checkout@v4

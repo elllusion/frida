@@ -1,0 +1,391 @@
+name: build-windows
+
+on: push
+
+env:
+  ANDROID_NDK_VERSION: r25b
+  NODE_TARGETS_DEFAULT: '18.14.0'
+  NODE_TARGETS_FREEBSD: '18.14.0'
+  ELECTRON_TARGETS_DEFAULT: '24.1.3'
+  ELECTRON_TARGETS_FREEBSD: '24.1.3'
+
+jobs:
+  publish-prod:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs:
+      - package-windows
+      - package-windows-sfx
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          aws-access-key-id: ${{ secrets.S3_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.S3_SECRET_KEY }}
+          cloudflare-email: ${{ secrets.CF_EMAIL }}
+          cloudflare-token: ${{ secrets.CF_TOKEN }}
+      - name: Grab needed submodules
+        run: python tools/ensure-submodules.py frida-core frida-python frida-node
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y reprepro
+          sudo npm install -g cloudflare-cli
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          merge-multiple: true
+          path: build/release-assets/
+      - name: Download Node.js and Electron prebuilds for Windows/x86
+        uses: actions/download-artifact@v4
+        with:
+          name: frida-node-windows-x86
+          path: build/release-assets/
+      - name: Download Node.js and Electron prebuilds for Windows/x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: frida-node-windows-x86_64
+          path: build/release-assets/
+      - name: Package Cirrus CI artifacts
+        run: .github/scripts/package-cirrus-ci-artifacts.sh ${{ github.sha }}
+      - name: Rename release assets
+        run: .github/scripts/rename-release-assets.sh
+      - name: Publish release to GitHub
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "Frida ${{ env.FRIDA_VERSION }}"
+          body: "See https://frida.re/news/ for details."
+          files: build/release-assets/*
+      - name: Publish Python bindings to PyPI
+        uses: ./.github/actions/publish-python-bindings
+        with:
+          site: production
+          pypi-token: ${{ secrets.PYPI_API_TOKEN }}
+          testpypi-token: ${{ secrets.TEST_PYPI_API_TOKEN }}
+      - name: Setup npm authentication
+        uses: actions/setup-node@v4
+        with:
+          registry-url: "https://registry.npmjs.org"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish Node.js bindings to npm
+        run: |
+          cd subprojects/frida-node
+          git submodule update --init --recursive
+          npm version $FRIDA_VERSION
+          mkdir prebuilds
+          cp ../../build/release-assets/frida-*-node-*-linux-x64.tar.gz prebuilds/
+          npm install
+          npm publish
+
+  publish-dev:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs:
+      - frida-windows
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          aws-access-key-id: ${{ secrets.S3_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.S3_SECRET_KEY }}
+          cloudflare-email: ${{ secrets.CF_EMAIL }}
+          cloudflare-token: ${{ secrets.CF_TOKEN }}
+      - name: Grab needed submodules
+        run: python tools/ensure-submodules.py frida-core frida-python
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y reprepro
+          sudo npm install -g cloudflare-cli
+      - name: Publish Python bindings to TestPyPI
+        uses: ./.github/actions/publish-python-bindings
+        with:
+          site: development
+          pypi-token: ${{ secrets.PYPI_API_TOKEN }}
+          testpypi-token: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+  package-windows:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: frida-windows
+    strategy:
+      matrix:
+        arch: [x86, x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+      - name: Package Gum devkit
+        uses: ./.github/actions/package-artifact-files-as-tarball
+        with:
+          name: frida-gum-devkit-windows-${{ matrix.arch }}
+      - name: Package GumJS devkit
+        uses: ./.github/actions/package-artifact-files-as-tarball
+        with:
+          name: frida-gumjs-devkit-windows-${{ matrix.arch }}
+      - name: Package Core devkit
+        uses: ./.github/actions/package-artifact-files-as-tarball
+        with:
+          name: frida-core-devkit-windows-${{ matrix.arch }}
+      - name: Package frida-server
+        uses: ./.github/actions/package-artifact-file
+        with:
+          name: frida-server-windows-${{ matrix.arch }}
+      - name: Package frida-portal
+        uses: ./.github/actions/package-artifact-file
+        with:
+          name: frida-portal-windows-${{ matrix.arch }}
+      - name: Package frida-inject
+        uses: ./.github/actions/package-artifact-file
+        with:
+          name: frida-inject-windows-${{ matrix.arch }}
+      - name: Package frida-gadget
+        uses: ./.github/actions/package-artifact-file
+        with:
+          name: frida-gadget-windows-${{ matrix.arch }}
+      - name: Package .NET bindings
+        uses: ./.github/actions/package-artifact-file
+        with:
+          name: frida-clr-windows-${{ matrix.arch }}
+      - name: Package QML bindings
+        if: matrix.arch == 'x86_64'
+        uses: ./.github/actions/package-artifact-files-as-tarball
+        with:
+          name: frida-qml-windows-${{ matrix.arch }}
+
+  package-windows-sfx:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: frida-windows
+    strategy:
+      matrix:
+        arch: [x86, x86_64]
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+      - name: Package Gum devkit
+        uses: ./.github/actions/package-artifact-files-as-sfx
+        with:
+          name: frida-gum-devkit-windows-${{ matrix.arch }}
+      - name: Package GumJS devkit
+        uses: ./.github/actions/package-artifact-files-as-sfx
+        with:
+          name: frida-gumjs-devkit-windows-${{ matrix.arch }}
+      - name: Package Core devkit
+        uses: ./.github/actions/package-artifact-files-as-sfx
+        with:
+          name: frida-core-devkit-windows-${{ matrix.arch }}
+
+  frida-windows:
+    needs: sdk-windows
+    strategy:
+      matrix:
+        arch: [x86, x86_64]
+      fail-fast: false
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up environment
+        uses: ./.github/actions/setup-windows-env
+        with:
+          aws-access-key-id: ${{ secrets.S3_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.S3_SECRET_KEY }}
+          cloudflare-email: ${{ secrets.CF_EMAIL }}
+          cloudflare-token: ${{ secrets.CF_TOKEN }}
+          architecture: ${{ matrix.arch == 'x86_64' && 'x64' || matrix.arch }}
+      - name: Install Qt
+        if: ${{ contains(matrix.arch, '64') }}
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.7.0'
+          cache: true
+          setup-python: false
+      - name: Configure
+        run: >-
+          .\configure
+          --prefix=$Env:FRIDA_PREFIX
+          --host=windows-${{ matrix.arch }}
+          --enable-gadget
+          --enable-server
+          --enable-portal
+          --enable-inject
+          --
+          "-Dfrida_qml=auto"
+          "-Dfrida-gum:devkits=gum,gumjs"
+          "-Dfrida-core:devkits=core"
+      - name: Compile
+        run: .\make
+      - name: Install
+        run: .\make install
+      - name: Upload Gum devkit
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-gum-devkit-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/lib/frida/devkits/gum/
+      - name: Upload GumJS devkit
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-gumjs-devkit-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/lib/frida/devkits/gumjs/
+      - name: Upload Core devkit
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-core-devkit-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/lib/frida/devkits/core/
+      - name: Upload frida-server
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-server-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/bin/frida-server.exe
+      - name: Upload frida-portal
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-portal-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/bin/frida-portal.exe
+      - name: Upload frida-inject
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-inject-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/bin/frida-inject.exe
+      - name: Upload 32-bit frida-gadget
+        if: ${{ !contains(matrix.arch, '64') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-gadget-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/lib/frida/32/frida-gadget.dll
+      - name: Upload 64-bit frida-gadget
+        if: ${{ contains(matrix.arch, '64') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-gadget-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/lib/frida/64/frida-gadget.dll
+      - name: Package Python bindings
+        run: |
+          $Env:FRIDA_EXTENSION = "$Env:FRIDA_PREFIX\lib\site-packages\frida\_frida.pyd"
+          cd subprojects\frida-python
+          pip wheel -w "$Env:FRIDA_PREFIX\wheels" --no-deps .
+      - name: Upload Python bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-python-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/wheels/*.whl
+      - name: Build Node.js bindings
+        run: |
+          $installdir = "$Env:FRIDA_PREFIX\prebuilds"
+          $nodeTargets = '${{ env.NODE_TARGETS_DEFAULT }}'.Split(' ')
+          $electronTargets = '${{ env.ELECTRON_TARGETS_DEFAULT }}'.Split(' ')
+          if ('${{ matrix.arch }}' -eq 'x86') {
+            $nodeTargets = $nodeTargets | where { [int]($_.Split('.')[0]) -le 16 }
+            $electronTargets = @()
+          }
+          $prebuilds = @{
+            node = $nodeTargets
+            electron = $electronTargets
+          }
+          $Env:FRIDA_DEPS = "$pwd\deps"
+          $Env:PKG_CONFIG_PATH = "$Env:FRIDA_PREFIX\lib\pkgconfig"
+          function Run() {
+            $program = $args[0]
+            $arglist = $args | Select-Object -Skip 1
+            & $program $arglist
+            $result = $LASTEXITCODE
+            if ($result -ne 0) {
+              throw "'$program $arglist' failed with exit status $result"
+            }
+          }
+          Run python .\tools\ensure-submodules.py frida-node
+          cd subprojects\frida-node
+          Run npm version $FRIDA_VERSION
+          New-Item -ItemType Directory -Path $installdir
+          foreach ($item in $prebuilds.GetEnumerator()) {
+            $runtime = $item.Key
+            foreach ($target in $item.Value) {
+              Run .\configure `
+                  --prefix=$Env:FRIDA_PREFIX `
+                  --host=windows-${{ matrix.arch }} `
+                  --with-runtime=$runtime `
+                  --with-target=$target
+              Run .\make prebuild
+              Copy-Item .\build\*.tar.gz -Destination $installdir
+              Remove-Item build -Recurse
+            }
+          }
+      - name: Upload Node.js bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-node-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/prebuilds/*.tar.gz
+      - name: Build .NET bindings
+        run: >-
+          Remove-Item build -Recurse
+          && .\configure
+          --prefix=$Env:FRIDA_PREFIX
+          --host=windows-${{ matrix.arch }}-md
+          --enable-frida-clr
+          --disable-frida-python
+          --disable-frida-tools
+          --
+          "-Dfrida-core:compiler_backend=disabled"
+          && .\make install
+      - name: Upload .NET bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-clr-windows-${{ matrix.arch }}
+          path: ${{ env.FRIDA_PREFIX }}/bin/Frida.dll
+      - name: Upload QML bindings
+        if: ${{ contains(matrix.arch, '64') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-qml-windows-${{ matrix.arch }}
+          path: |
+            ${{ env.FRIDA_PREFIX }}/lib/qml/
+            !*.lib
+            !*.pdb
+
+  toolchain-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+      - name: Set up environment
+        uses: ./.github/actions/setup-windows-env
+        with:
+          aws-access-key-id: ${{ secrets.S3_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.S3_SECRET_KEY }}
+          cloudflare-email: ${{ secrets.CF_EMAIL }}
+          cloudflare-token: ${{ secrets.CF_TOKEN }}
+      - name: Roll toolchain
+        run: python releng\deps.py roll toolchain windows-x86
+
+  sdk-windows:
+    needs: toolchain-windows
+    strategy:
+      matrix:
+        arch: [x86, x86_64]
+        config: [md, mdd, mt, mtd]
+      fail-fast: false
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+      - name: Set up environment
+        uses: ./.github/actions/setup-windows-env
+        with:
+          aws-access-key-id: ${{ secrets.S3_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.S3_SECRET_KEY }}
+          cloudflare-email: ${{ secrets.CF_EMAIL }}
+          cloudflare-token: ${{ secrets.CF_TOKEN }}
+      - name: Roll SDK
+        run: python releng\deps.py roll sdk windows-${{ matrix.arch }}-${{ matrix.config }} --activate
