@@ -1,13 +1,13 @@
-name: CI
+name: build-windows
 
 on: push
 
 env:
   ANDROID_NDK_VERSION: r25b
-  NODE_TARGETS_DEFAULT: '16.0.0 18.0.0 20.0.0 22.0.0'
-  NODE_TARGETS_FREEBSD: '20.0.0'
-  ELECTRON_TARGETS_DEFAULT: '31.0.0'
-  ELECTRON_TARGETS_FREEBSD: '30.0.0'
+  NODE_TARGETS_DEFAULT: '18.14.0'
+  NODE_TARGETS_FREEBSD: '18.14.0'
+  ELECTRON_TARGETS_DEFAULT: '24.1.3'
+  ELECTRON_TARGETS_FREEBSD: '24.1.3'
 
 jobs:
   publish-prod:
@@ -16,16 +16,16 @@ jobs:
     needs:
       - package-windows
       - package-windows-sfx
-      - package-macos
-      - package-linux
-      - package-ios
-      - package-watchos
-      - package-tvos
-      - package-android
-      - package-qnx
-      - package-apple-universal
-      - assemble-ios-assets
-      - assemble-tvos-assets
+      # - package-macos
+      # - package-linux
+      # - package-ios
+      # - package-watchos
+      # - package-tvos
+      # - package-android
+      # - package-qnx
+      # - package-apple-universal
+      # - assemble-ios-assets
+      # - assemble-tvos-assets
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -149,10 +149,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - frida-windows
-      - frida-macos
-      - frida-linux
-      - assemble-ios-assets
-      - assemble-tvos-assets
+      # - frida-macos
+      # - frida-linux
+      # - assemble-ios-assets
+      # - assemble-tvos-assets
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
